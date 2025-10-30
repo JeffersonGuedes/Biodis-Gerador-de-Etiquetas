@@ -1,0 +1,5 @@
+# Dependências para Gerador de Etiquetas Correios
+streamlit==1.31.0
+pypdf==3.17.4
+fpdf==1.7.2
+requests==2.31.0
