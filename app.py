@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 # ==================== MODELS ====================
-
+ 
 @dataclass
 class EtiquetaData:
     """Dados de uma etiqueta individual"""
@@ -408,15 +408,15 @@ def parse_nfe_data(text: str) -> Optional[EtiquetaData]:
     # Procura bloco TRANSPORTADOR e extrai o nome da transportadora
     transport_section = text[text.find('TRANSPORTADOR'):] if 'TRANSPORTADOR' in text else text
     
-    # Estratégia 1: Procura padrões que contenham palavras-chave de transporte
-    # Exemplo: "POTIGUAR TRANSPORTES DE CARGAS LTDA", "RIOGRANDELOG TRANSPORTES LTDA"
+    # Estratégia: Procura padrões específicos de transportadoras conhecidas
+    # Usa word boundary (\b) para evitar capturar prefixos indesejados como "caixa"
     transport_patterns = [
-        # Padrão 1: Nome + TRANSPORTES + complemento (LTDA/CARGAS/etc)
-        r'([A-Z][A-Z0-9]{2,})\s+TRANSPORTES(?:\s+DE\s+CARGAS)?(?:\s+LTDA)?',
-        # Padrão 2: Nome + LOG + TRANSPORTES/LTDA
-        r'([A-Z][A-Z0-9]{2,}LOG)\s+(?:TRANSPORTES\s+)?LTDA',
-        # Padrão 3: Nome completo terminando em LTDA/S/A/EIRELI (mais genérico)
-        r'([A-Z][A-Z0-9]{2,}(?:\s+[A-Z][A-Z0-9]*){0,4})\s+(?:TRANSPORTES|LTDA|LOG|S/A|EIRELI)',
+        # Padrão 1: Nomes específicos de transportadoras conhecidas (mais específico primeiro)
+        r'\b(POTIGUAR|BRASPRESS|RIOGRANDELOG|JADLOG|SEQUOIA|JAMEF|AZUL\s+CARGO)\b',
+        # Padrão 2: Nome seguido de TRANSPORTES (captura só o nome antes de TRANSPORTES)
+        r'\b([A-Z]{4,})\s+TRANSPORTES',
+        # Padrão 3: Nome terminando com LOG seguido de TRANSPORTES ou LTDA
+        r'\b([A-Z]{4,}LOG)\b(?=\s+(?:TRANSPORTES|LTDA))',
     ]
     
     transport_found = False
@@ -424,18 +424,14 @@ def parse_nfe_data(text: str) -> Optional[EtiquetaData]:
         m = re.search(pattern, transport_section, re.IGNORECASE)
         if m:
             transport_name = m.group(1).strip()
-            # Limpa sufixos como '0-Remetente-CIF' que porventura venham juntos
-            transport_name = re.sub(r'\s+\d[-\w\s]*$', '', transport_name)
+            # Remove espaços múltiplos
             transport_name = re.sub(r'\s+', ' ', transport_name)
-            # Pega apenas a primeira palavra (ex: POTIGUAR de "POTIGUAR TRANSPORTES", RIOGRANDELOG de "RIOGRANDELOG TRANSPORTES")
-            first_word = transport_name.split()[0] if transport_name else transport_name
-            data['transporte'] = first_word.upper()
+            data['transporte'] = transport_name.upper()
             transport_found = True
             break
     
-    # Fallback: se nenhum padrão funcionou, deixa vazio para o usuário preencher manualmente
+    # Fallback: se nenhum padrão funcionou, tenta extrair da linha após TRANSPORTADOR
     if not transport_found:
-        # Tenta pegar linha após TRANSPORTADOR/REMETENTE que não seja endereço/CEP/telefone
         lines_after = [l.strip() for l in transport_section.split('\n') if l.strip()]
         for i, line in enumerate(lines_after):
             if 'TRANSPORTADOR' in line and i + 1 < len(lines_after):
@@ -446,12 +442,17 @@ def parse_nfe_data(text: str) -> Optional[EtiquetaData]:
                     not re.search(r'\d{5}[-]\d{3}', candidate) and
                     not re.search(r'\d{4,5}[-\s]\d{4}', candidate) and
                     not re.match(r'^(QUANTIDADE|ESPECIE|MARCA|NUMERO)', candidate, re.IGNORECASE)):
-                    # Pega primeira palavra do candidato
-                    first_word = candidate.split()[0] if candidate else candidate
-                    if len(first_word) >= 3:
-                        data['transporte'] = first_word.upper()
-                        transport_found = True
-                        break
+                    # Remove palavras comuns que aparecem antes do nome da transportadora
+                    candidate_clean = re.sub(r'^(caixa|embalagem|pacote)\s+', '', candidate, flags=re.IGNORECASE)
+                    # Pega primeira palavra válida (mínimo 4 caracteres)
+                    words = candidate_clean.split()
+                    for word in words:
+                        if len(word) >= 4 and word.isalpha():
+                            data['transporte'] = word.upper()
+                            transport_found = True
+                            break
+                if transport_found:
+                    break
         
         # Se ainda não achou, deixa vazio
         if not transport_found:
